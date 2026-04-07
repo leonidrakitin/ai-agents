@@ -49,6 +49,9 @@ module Agents
   class HandoffTool < Tool
     attr_reader :target_agent
 
+    param :handoff_reason, type: "string", desc: "Why the conversation should move to this agent", required: false
+    param :transfer_summary, type: "string", desc: "Compact summary for the next agent", required: false
+
     def initialize(target_agent)
       @target_agent = target_agent
 
@@ -71,12 +74,14 @@ module Agents
 
     # Use RubyLLM's halt mechanism to stop continuation after handoff
     # Store handoff info in context for Runner to detect and process
-    def perform(tool_context)
+    def perform(tool_context, handoff_reason: nil, transfer_summary: nil)
       # Store handoff information in context for Runner to detect
       # TODO: The following is a race condition that needs to be addressed in future versions
       # If multiple handoff tools execute concurrently, they overwrite each other's pending_handoff data.
       tool_context.run_context.context[:pending_handoff] = {
         target_agent: @target_agent,
+        reason: handoff_reason,
+        summary: transfer_summary,
         timestamp: Time.now
       }
 

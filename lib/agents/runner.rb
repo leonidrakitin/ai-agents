@@ -53,9 +53,12 @@ module Agents
   #   # Triage agent will handoff to billing_agent
   class Runner
     DEFAULT_MAX_TURNS = 10
+    DEFAULT_MAX_HANDOFFS = 6
+    MAX_REPEAT_HANDOFF_EDGE = 2
 
     class MaxTurnsExceeded < StandardError; end
     class AgentNotFoundError < StandardError; end
+    class HandoffLoopError < StandardError; end
 
     # Create a thread-safe agent runner for multi-agent conversations.
     # The first agent becomes the default entry point for new conversations.
@@ -84,8 +87,8 @@ module Agents
     # @param params [Hash, nil] Provider-specific parameters passed to the underlying LLM (e.g., service_tier)
     # @param callbacks [Hash] Optional callbacks for real-time event notifications
     # @return [RunResult] The result containing output, messages, and usage
-    def run(starting_agent, input, context: {}, registry: {}, max_turns: DEFAULT_MAX_TURNS, headers: nil, params: nil,
-            callbacks: {})
+    def run(starting_agent, input, context: {}, registry: {}, max_turns: DEFAULT_MAX_TURNS,
+            max_handoffs: DEFAULT_MAX_HANDOFFS, headers: nil, params: nil, callbacks: {})
       # The starting_agent is already determined by AgentRunner based on conversation history
       current_agent = starting_agent
 
@@ -141,6 +144,7 @@ module Agents
         if response.is_a?(RubyLLM::Tool::Halt) && context_wrapper.context[:pending_handoff]
           handoff_info = context_wrapper.context.delete(:pending_handoff)
           next_agent = handoff_info[:target_agent]
+          record_handoff!(context_wrapper, current_agent, next_agent, handoff_info, max_handoffs)
 
           # Validate that the target agent is in our registry
           # This prevents handoffs to agents that weren't explicitly provided
@@ -193,6 +197,9 @@ module Agents
         return finalize_run(chat, context_wrapper, current_agent, output: response.content)
       end
     rescue MaxTurnsExceeded => e
+      finalize_run(chat, context_wrapper, current_agent,
+                   output: "Conversation ended: #{e.message}", error: e)
+    rescue HandoffLoopError => e
       finalize_run(chat, context_wrapper, current_agent,
                    output: "Conversation ended: #{e.message}", error: e)
     rescue StandardError => e
@@ -457,6 +464,35 @@ module Agents
       end
 
       all_tools
+    end
+
+    def record_handoff!(context_wrapper, current_agent, next_agent, handoff_info, max_handoffs)
+      trace = context_wrapper.context[:handoff_trace] ||= []
+      entry = {
+        from: current_agent.name,
+        to: next_agent.name,
+        reason: handoff_info[:reason],
+        summary: handoff_info[:summary],
+        timestamp: handoff_info[:timestamp]
+      }.compact
+
+      trace << entry
+      context_wrapper.context[:last_handoff] = entry
+      context_wrapper.context[:handoff_count] = trace.length
+
+      if trace.length > max_handoffs
+        raise HandoffLoopError, "Exceeded maximum handoffs: #{max_handoffs}"
+      end
+
+      recent_edges = trace.reverse.take(MAX_REPEAT_HANDOFF_EDGE)
+      return if recent_edges.length < MAX_REPEAT_HANDOFF_EDGE
+
+      repeated_edges = recent_edges.all? do |hop|
+        hop[:from] == entry[:from] && hop[:to] == entry[:to]
+      end
+      return unless repeated_edges
+
+      raise HandoffLoopError, "Detected repeated handoff loop: #{entry[:from]} -> #{entry[:to]}"
     end
   end
 end

@@ -875,6 +875,17 @@ RSpec.describe Agents::Runner do
         expect(result.context[:current_agent]).to eq("HandoffAgent")
       end
 
+      it "stores handoff trace for orchestration state" do
+        registry = { "TriageAgent" => agent_with_handoffs, "HandoffAgent" => handoff_agent }
+        result = runner.run(agent_with_handoffs, "I need specialist help", registry: registry)
+
+        expect(result.context[:handoff_trace]).to include(
+          hash_including(from: "TriageAgent", to: "HandoffAgent")
+        )
+        expect(result.context[:last_handoff]).to include(from: "TriageAgent", to: "HandoffAgent")
+        expect(result.context[:handoff_count]).to eq(1)
+      end
+
       it "returns error when handoff to unregistered agent is attempted" do
         # Only register the triage agent, not the handoff target
         registry = { "TriageAgent" => agent_with_handoffs }
@@ -917,6 +928,49 @@ RSpec.describe Agents::Runner do
         expect(result.output).to be_nil
         expect(result.context[:current_agent]).to eq("TriageAgent")
         expect(result.context[:pending_handoff]).to be_nil # Should clear pending handoff
+      end
+    end
+
+    context "when handoff loop repeats the same edge" do
+      let(:looping_agent) do
+        instance_double(Agents::Agent,
+                        name: "LoopAgent",
+                        model: "gpt-4o",
+                        tools: [],
+                        handoff_agents: [handoff_agent],
+                        temperature: 0.7,
+                        response_schema: nil,
+                        get_system_prompt: "You loop",
+                        headers: {},
+                        params: {})
+      end
+
+      it "stops when the same handoff edge repeats" do
+        allow(runner).to receive(:restore_conversation_history)
+        allow(runner).to receive(:save_conversation_state)
+        allow(runner).to receive(:configure_chat_for_agent)
+        allow(Agents::Helpers::MessageExtractor).to receive(:extract_messages).and_return([])
+
+        mock_chat = instance_double(RubyLLM::Chat)
+        halt_response = instance_double(RubyLLM::Tool::Halt, content: "handoff")
+        allow(halt_response).to receive(:is_a?).with(RubyLLM::Tool::Halt).and_return(true)
+        allow(RubyLLM::Chat).to receive(:new).and_return(mock_chat)
+        allow(mock_chat).to receive(:ask).and_return(halt_response)
+        allow(mock_chat).to receive(:complete).and_return(halt_response)
+
+        context = {
+          pending_handoff: { target_agent: handoff_agent, timestamp: Time.now },
+          handoff_trace: [
+            { from: "LoopAgent", to: "HandoffAgent", timestamp: Time.now }
+          ]
+        }
+        registry = { "LoopAgent" => looping_agent, "HandoffAgent" => handoff_agent }
+
+        result = runner.run(looping_agent, "Loop again", context: context, registry: registry)
+
+        expect(result.failed?).to be true
+        expect(result.error).to be_a(Agents::Runner::HandoffLoopError)
+        expect(result.error.message).to include("Detected repeated handoff loop")
       end
     end
 
