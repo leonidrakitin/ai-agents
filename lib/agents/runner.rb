@@ -398,6 +398,7 @@ module Agents
 
       # Combine all tools - both handoff and regular tools need wrapping
       all_tools = build_agent_tools(agent, context_wrapper)
+      log_outgoing_prompt(agent, system_prompt, all_tools, replace)
 
       # Switch model if different (important for handoffs between agents using different models)
       chat.with_model(agent.model) if replace
@@ -464,6 +465,18 @@ module Agents
       end
 
       all_tools
+    end
+
+    # Temporary debug logging for outgoing prompts/tool context before LLM calls.
+    def log_outgoing_prompt(agent, system_prompt, all_tools, replace)
+      return unless Agents.logger
+
+      tool_names = all_tools.map(&:name)
+      Agents.logger.debug(
+        "[agents.runner] outgoing_prompt " \
+          "agent=#{agent.name.inspect} model=#{agent.model.inspect} " \
+          "replace=#{replace} tools=#{tool_names.inspect} prompt=#{system_prompt.to_s.inspect}"
+      )
     end
 
     def record_handoff!(context_wrapper, current_agent, next_agent, handoff_info, max_handoffs)
