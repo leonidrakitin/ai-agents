@@ -58,7 +58,9 @@ module Agents
       apply_if_present(config, :anthropic_api_key)
       apply_if_present(config, :gemini_api_key)
       apply_if_present(config, :deepseek_api_key)
+      apply_if_present(config, :deepseek_api_base)
       apply_if_present(config, :openrouter_api_key)
+      apply_if_present(config, :openrouter_api_base)
       apply_if_present(config, :ollama_api_base)
 
       # AWS Bedrock configuration
@@ -83,7 +85,10 @@ module Agents
   class Configuration
     # Provider API keys and configuration
     attr_accessor :openai_api_key, :openai_api_base, :openai_organization_id, :openai_project_id
-    attr_accessor :anthropic_api_key, :gemini_api_key, :deepseek_api_key, :openrouter_api_key, :ollama_api_base,
+    attr_accessor :anthropic_api_key, :gemini_api_key,
+                  :deepseek_api_key, :deepseek_api_base,
+                  :openrouter_api_key, :openrouter_api_base,
+                  :ollama_api_base,
                   :bedrock_api_key, :bedrock_secret_key, :bedrock_region, :bedrock_session_token
 
     # General configuration
